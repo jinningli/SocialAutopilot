@@ -1,0 +1,4 @@
+# Module to use
+module: calibration
+model: cognitive  # TODO should be sub-field
+dataset: russophobia

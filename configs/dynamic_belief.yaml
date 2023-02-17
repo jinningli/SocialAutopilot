@@ -1,0 +1,4 @@
+# Module to use
+module: calibration
+model: dynamic_belief  # TODO should be sub-field
+dataset: russophobia

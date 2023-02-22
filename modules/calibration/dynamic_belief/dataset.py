@@ -4,6 +4,9 @@ import scipy.sparse as sp
 import os
 import json
 import pickle
+
+import torch
+
 from feature_builder import MFFeatureBuilder, TfidfEmbeddingVectorizer
 from collections import Counter
 from sklearn.metrics.pairwise import cosine_similarity
@@ -84,13 +87,15 @@ class DatasetBase():
         # data = data[data.name.isin(pickedPopUsers)]
 
         # filter by tweet
-        tweet_counts = data['postTweet'].value_counts()
-        user_counts = data['name'].value_counts()
-
-        data = data[
-            data['postTweet'].isin(tweet_counts[tweet_counts > kthreshold].index)
-             & data['name'].isin(user_counts[user_counts > uthreshold].index)
-        ]
+        # TODO we do not filter because it's already done in social autopilot
+        print("we do not filter because it's already done in social autopilot")
+        # tweet_counts = data['postTweet'].value_counts()
+        # user_counts = data['name'].value_counts()
+        #
+        # data = data[
+        #     data['postTweet'].isin(tweet_counts[tweet_counts > kthreshold].index)
+        #      & data['name'].isin(user_counts[user_counts > uthreshold].index)
+        # ]
 
         print("After filtering: #Lines: {} #Users: {} #Tweets: {}".format(len(data),
                                                                           len(data["name"].unique()),
@@ -194,9 +199,14 @@ class TwitterDataset(MFDataset):
         self.asser_label = None
         self.asserlist = None
         self.name_list = None
+        self.tweet_id_list = None
         self.num_user = None
         self.num_assertion = None
         self.num_nodes = None
+
+        self.freeze_dict = None  # tweet_id (merged) to embedding
+        self.freeze_mask = None
+        self.freeze_tensor = None
 
         pkl_path = "/".join(args.data_path.split("/")[:-1])
         if not os.path.exists(pkl_path + "/" + "{}TwitterDataset.pkl".format(os.path.basename(args.data_path))):
@@ -212,7 +222,7 @@ class TwitterDataset(MFDataset):
                 self.data, self.processed_data, self.name_list, self.feature_builder, \
                 self.num_user, self.num_assertion, self.num_nodes = pickle.load(fin)
 
-        self.processed_data.to_csv("tmp.csv", index=False, sep="\t")
+        # self.processed_data.to_csv("tmp.csv", index=False, sep="\t")
 
     def preprocessing(self):
         # Preprocessing
@@ -228,6 +238,11 @@ class TwitterDataset(MFDataset):
         self.num_user = len(self.processed_data["name"].unique())
         self.num_assertion = len(self.processed_data["postTweet"].unique())
         self.num_nodes = self.num_user + self.num_assertion
+
+        if self.args.freeze_dict is not None:
+            with open(self.args.freeze_dict, "rb") as fin:
+                self.freeze_dict = pickle.load(fin)
+            print("USING freeze")
 
     def build(self):
         print("{} Building...".format(self.name))
@@ -312,14 +327,29 @@ class TwitterDataset(MFDataset):
         # calculate tweet assertion label
         self.asser_label = np.zeros(num_assertion).astype("int32")
         self.asserlist = [None for _ in range(num_assertion)]
+        self.tweet_id_list = [None for _ in range(num_assertion)]
         for i, item in self.processed_data.iterrows():
             label = item["label"]
             postTweet = item["postTweet"]
             tweet_id = self.feature_builder.tweet2index[postTweet]
             if self.asserlist[tweet_id] is None:
                 self.asserlist[tweet_id] = item["rawTweet"]
+            if self.tweet_id_list[tweet_id] is None:
+                self.tweet_id_list[tweet_id] = item["tweet_id"]
             if self.asser_label[tweet_id] == 0:
                 self.asser_label[tweet_id] = label
+
+        # get freeze mask
+        freeze_tensor_list = []
+        if self.freeze_dict is not None:
+            self.freeze_mask = np.zeros(self.num_nodes)
+            for i in range(self.num_assertion):
+                if self.tweet_id_list[i] in self.freeze_dict:
+                    self.freeze_mask[i + self.num_user] = 1
+                    freeze_tensor_list.append(self.freeze_dict[self.tweet_id_list[i]].reshape(1, -1))
+            self.freeze_tensor = np.concatenate(freeze_tensor_list, axis=0)
+            self.freeze_tensor = torch.from_numpy(self.freeze_tensor)
+            self.freeze_mask = self.freeze_mask.astype("bool")
 
         # calculate tweet label
         num_user = self.num_user

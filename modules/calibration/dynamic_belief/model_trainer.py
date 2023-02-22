@@ -55,12 +55,13 @@ class TrainerBase():
 
 
 class InfoVGAETrainer(TrainerBase):
-    def __init__(self, adj_matrix, features, args):
+    def __init__(self, adj_matrix, features, args, dataset):
         super(InfoVGAETrainer).__init__()
         self.name = "InfoVGAETrainer"
         self.adj_matrix = adj_matrix
         self.features = features
         self.args = args
+        self.dataset = dataset  # for freeze usage
 
         self.model = None
         self.optimizer = None
@@ -141,7 +142,14 @@ class InfoVGAETrainer(TrainerBase):
 
             # Train VAE
             z = self.model.encode(features)
-            A_pred = self.model.decode(z)
+
+            if self.args.freeze_dict is not None:
+                z_freezed = torch.zeros_like(z)
+                z_freezed[~self.dataset.freeze_mask] = z[~self.dataset.freeze_mask]
+                z_freezed[self.dataset.freeze_mask] = self.dataset.freeze_tensor
+                A_pred = self.model.decode(z_freezed)
+            else:
+                A_pred = self.model.decode(z)
 
             vae_recon_loss = norm * F.binary_cross_entropy(A_pred.view(-1), adj_label.to_dense().view(-1),
                                                            weight=weight_tensor)
@@ -176,27 +184,10 @@ class InfoVGAETrainer(TrainerBase):
 
         self.writer.close()
         self.result_embedding = self.model.encode(features).detach().cpu().numpy()
-
-    def flip(self, theme, time):
-        flip_list = [
-            # "2,8-10",
-            # "1,7-9",
-            # "4,5-7",
-            # "4,7-9",
-            # "5,6-8",
-            # "5,9-11",
-            # "6,9-11",
-            # "6,10-12",
-            # "7,5-7",
-            # "7,8-10",
-            # "8,5-7",
-            # "8,7-9",
-        ]
-        if "{},{}".format(theme, time) in flip_list:
-            print("!!!!FLIP")
-            embedding = self.result_embedding.copy()
-            self.result_embedding[:, 0] = embedding[:, 1]
-            self.result_embedding[:, 1] = embedding[:, 0]
+        if self.args.freeze_dict is not None:
+            # print(self.result_embedding[self.dataset.freeze_mask])
+            # print(self.dataset.freeze_tensor)
+            self.result_embedding[self.dataset.freeze_mask] = self.dataset.freeze_tensor.numpy()
 
 
     def save(self, path=None):
@@ -207,6 +198,12 @@ class InfoVGAETrainer(TrainerBase):
         with open(path + "/embedding.bin", 'wb') as fout:
             pickle.dump(self.result_embedding, fout)
             print("Embedding and dependencies are saved in {}".format(path))
+        with open(path + "/freeze_dict.pkl", 'wb') as fout:
+            output_dict = {}
+            for i, tweet_id in enumerate(self.dataset.tweet_id_list):
+                output_dict[tweet_id] = self.result_embedding[self.dataset.num_user + i]
+            pickle.dump(output_dict, fout)
+            print("freeze_dict saved in {}".format(path))
 
     def get_scores(self, adj_orig, edges_pos, edges_neg, adj_rec):
         def sigmoid(x):

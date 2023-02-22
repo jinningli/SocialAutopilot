@@ -18,7 +18,6 @@ parser.add_argument('--config_name', type=str, default=None, help="Use existing 
 
 # General
 parser.add_argument('--model', type=str, default="InfoVGAE", help="model to use")
-parser.add_argument('--theme', type=int, default=None, help="theme tag")
 parser.add_argument('--epochs', type=int, default=500, help='epochs (iterations) for training')
 parser.add_argument('--learning_rate', type=float, default=0.01, help='learning rate of model')
 parser.add_argument('--device', type=str, default="0", help='cpu/gpu device')
@@ -28,6 +27,7 @@ parser.add_argument('--use_cuda', action="store_true", help='whether to use cuda
 
 # Data
 parser.add_argument('--dataset', type=str, help='dataset to use')
+parser.add_argument('--freeze_dict', type=str, default=None, help='path for pickle of freeze dict (tweet only)')
 parser.add_argument('--add_self_loop', type=bool, default=True, help='add self loop for adj matrix')
 parser.add_argument('--directed', type=bool, default=False, help='use directed adj matrix')
 parser.add_argument('--data_path', type=str, default=None)
@@ -84,9 +84,8 @@ dataset.dump_label()
 # Start Training
 feature = sp.diags([1.0], shape=(dataset.num_nodes, dataset.num_nodes))
 setattr(args, "input_dim", dataset.num_nodes)
-trainer = InfoVGAETrainer(adj_matrix, feature, args)
+trainer = InfoVGAETrainer(adj_matrix, feature, args, dataset)
 trainer.train()
-trainer.flip(theme=args.theme, time=os.path.basename(args.data_path).replace(".csv", ""))
 trainer.save()
 
 print(trainer.result_embedding)
@@ -116,7 +115,7 @@ def plot_2d(embedding, num_user, num_tweet=None):
     plt.ylabel("Belief in View2")
     plt.xlim([-1, 20])
     plt.ylim([-1, 20])
-    plt.title("Theme {} Month {}".format(args.theme, os.path.basename(args.data_path).replace(".csv", "")))
+    plt.title("Dataset {} Month {}".format(args.dataset, os.path.basename(args.data_path).replace(".csv", "")))
     plt.savefig(args.output_path + "/2d.jpg", dpi=500)
 
 plot_2d(trainer.result_embedding, dataset.num_user)
@@ -139,30 +138,12 @@ def plot_2d_user(embedding, num_user, num_tweet=None):
     plt.ylabel("Belief in View2")
     plt.xlim([-0.1, 4])
     plt.ylim([-0.1, 4])
-    plt.title("Theme {} Month {}".format(args.theme, os.path.basename(args.data_path).replace(".csv", "")))
+    plt.title("Dataset {} Month {}".format(args.dataset, os.path.basename(args.data_path).replace(".csv", "")))
     plt.savefig(args.output_path + "/2d_user.jpg", dpi=500)
 
 plot_2d_user(trainer.result_embedding, dataset.num_user)
 
 # key point plot
-
-def read_influential(theme, top=200):
-    with open("dataset/influential/I{}.json".format(theme + 23), "r") as fin:
-        js = json.load(fin)
-    data = list(js.items())[:top]
-    print("Must keep top {} users for theme {}".format(top, theme))
-    return [item[0] for item in data]
-
-influentials = read_influential(theme=args.theme)
-name_list = list(dataset.name_list)
-result = {}
-for influencer in influentials:
-    if influencer in name_list:
-        ind = name_list.index(influencer)
-        result[influencer] = [float(trainer.result_embedding[ind, 0]), float(trainer.result_embedding[ind, 1])]
-with open(args.output_path + "/influencers.json", "w") as fout:
-    json.dump(result, fout, indent=2)
-
 
 # Start Evaluation (Twitter dataset)
 print("Running Evaluation ...")
